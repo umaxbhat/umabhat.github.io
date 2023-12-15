@@ -1,0 +1,175 @@
+---
+title: "Final_Project"
+author: "Uma Bhat"
+date: "2023-12-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE
+  )
+
+knitr::opts_knit$set(
+  root.dir = "."
+  )
+```
+
+```{r setup, include=FALSE}
+#Get tidyverse from library
+library(tidyverse)
+
+#Loading all blocked crossings data
+blocked_crossings <- read.csv("Final_Project/reports.csv")
+
+View(blocked_crossings)
+
+#Getting coffee with the blocked_crossings data.
+Hmisc::describe(blocked_crossings)
+
+#Cleaning things up.
+blocked_crossings <- blocked_crossings %>% janitor::clean_names()
+```
+
+```{r setup, include=FALSE}
+#Let's looked at blocked crossings just in the state of North Carolina.
+nc_blocked_crossings <- blocked_crossings %>%
+  filter(state == "NC")
+
+View(nc_blocked_crossings)
+
+#Which counties have seen the most blocked crossings?  
+nc_blocked_crossings %>%
+  group_by(county) %>%
+  summarize(by_county = n()) %>%
+  arrange(desc(by_county))
+
+#I can see from my table that the names of counties are not standardized (e.x. There is a "NASH" and "Nash" county). I want to account for this by standardizing all the county names.
+nc_blocked_crossings_clean <- nc_blocked_crossings %>%
+  mutate(cleaned_counties = tolower(county)) %>%
+  group_by(cleaned_counties) %>%
+  summarize(by_county = n()) %>%
+  arrange(desc(by_county))
+
+View(nc_blocked_crossings_clean)
+
+#We'll come back to this later to visualize which kinds of communities are most affected by blocked railroad crossings, plus hypothesize why. Right now it seems that a significantly high number of blockages are happening in Nash County.
+```
+
+```{r setup, include=FALSE}
+#Has the number of blocked crossings trended up or down year-over_year in North Carolina? Are blocked crossings happening more frequently at certain times of the year, and how does that vary county-by-county? In order to answer these questions, we first need to standardize dates/times using the lubridate package.
+
+library(lubridate)
+nc_blocked_crossings$date_time <- mdy(nc_blocked_crossings$date_time)
+nc_blocked_crossings$year <- year(nc_blocked_crossings$date_time)
+nc_blocked_crossings$month <- month(nc_blocked_crossings$date_time, label=TRUE, abbr=FALSE)
+
+nc_blocked_crossings <- nc_blocked_crossings %>% mutate(cleaned_counties = tolower(county))
+
+View(nc_blocked_crossings)
+
+#How many instances happened each year?
+nc_blocked_crossings %>% group_by(year) %>% summarize(count = n()) 
+#Note: The results of this are strange, and I wonder if they have to do with awareness of the reporting form. It could also be the pandemic, but clearly 2022 was a bit of an anomaly. 
+
+#Have any specific months seen greater accident instances overall? 
+nc_blocked_crossings %>% group_by(month) %>% summarize(count=n())
+
+#What about year-by-year? Did any particular month see more instances? 
+nc_blocked_2019 <- nc_blocked_crossings %>% filter(year == 2019) %>% group_by(month) %>% summarize(count = n()) %>% arrange(desc(count))
+nc_blocked_2020 <- nc_blocked_crossings %>% filter(year == 2020) %>% group_by(month) %>% summarize(count = n()) %>% arrange(desc(count))
+nc_blocked_2021 <- nc_blocked_crossings %>% filter(year == 2021) %>% group_by(month) %>% summarize(count = n()) %>% arrange(desc(count))
+nc_blocked_2022 <- nc_blocked_crossings %>% filter(year == 2022) %>% group_by(month) %>% summarize(count = n()) %>% arrange(desc(count))
+nc_blocked_2023 <- nc_blocked_crossings %>% filter(year == 2023) %>% group_by(month) %>% summarize(count = n()) %>% arrange(desc(count))
+#There doesn't seem to be a crazy link here, though in 2021/2022 there seemed to be a lot of blockages in March.
+
+#Which company/lines are responsible for most instances across all five years of available data? 
+nc_blocked_crossings %>% group_by(railroad) %>% summarize(count=n()) %>% arrange(desc(count))
+
+
+#I also want to look at Nash County's incidents in the past three years.
+nc_nash_2023 <- nc_blocked_crossings %>% 
+  filter(cleaned_counties == "nash", year == 2023) %>% 
+  summarize(count = n())
+
+nc_nash_2022 <- nc_blocked_crossings %>% 
+  filter(cleaned_counties == "nash", year == 2022) %>% 
+  summarize(count = n())
+
+nc_nash_2021 <- nc_blocked_crossings %>% 
+  filter(cleaned_counties == "nash", year == 2021) %>% 
+  summarize(count = n())
+
+View(nc_nash_2023)
+View(nc_nash_2022)
+View(nc_nash_2021)
+
+#What are some of the Nash County specific complaints? 
+nash <- nc_blocked_crossings %>% filter(cleaned_counties=="nash")
+View(nash)
+
+```
+```{r setup, include=FALSE}
+#What do the counties most affected by blocked railroad crossings look like in terms of socioeconomic makeup? In other words, who's being most hurt by this issue, and why? Are there specific companies that require certain goods there? In an ideal world, I'd also like to look at racial makeup, but that's a bit harder to quantify/subset.
+
+library(tidycensus)
+pacman::p_load(sf, tidyverse)
+census_api_key("02f55b56a648683cd3480700b90bc7bc630fd76a", install= TRUE, overwrite=TRUE)
+
+nc_county_median_income <- get_acs(geography = "county",
+                                   variables = c(median_income = "B19013_001"),
+                                   state = "NC",
+                                   year = 2021,
+                                   survey = "acs5",
+                                   geometry = T)
+
+library(ggplot2) 
+ggplot() + 
+  geom_sf(data = nc_county_median_income, 
+          aes(fill=estimate), 
+          color = "white")
+
+#That works — let's add a layer for all of the incident happenings, now. I need to join this table with data that matches the Crossing.ID's to geolocations. 
+library(sf)
+library(dplyr)
+
+crossings <- st_read("Final_Project/Crossing Inventory Data (Form 71) - Current 2/geo_export_e4ef6dc7-37dd-4109-bd9f-7034ecfd0ad5.shp")
+View(crossings)
+crossings_joined <- left_join(nc_blocked_crossings, crossings, by = c("crossing_id" = "crossingid"))
+View(crossings_joined)
+
+#Mapping just instances.
+library(leaflet)
+crossings_leaflet <- leaflet(data = crossings_joined) %>%
+  addTiles() %>%
+  addMarkers(lng = ~st_coordinates(geometry)[, 1],
+             lat = ~st_coordinates(geometry)[, 2])
+crossings_leaflet
+
+#Let's map both layers now and see which socioeconomic "bubbles" most incidents occur in.
+ggplot() + 
+  geom_sf(data = nc_county_median_income, 
+          aes(fill=estimate), 
+          color = "white") + 
+  geom_sf(data = crossings_joined$geometry,
+          color="red")
+
+#There doesn't seem to be much of a link here; lots generally vary across counties despite socioeconomic income, although I'm confused as to why if Nash saw the most incidents, the map doesn't really appear to reflect that. Either that, or they're all gathered in a very similar spot — perhaps the leaflet can help distinguish things more.
+```
+
+```{r setup, include=FALSE}
+#What if we map just some of the Nash County specific incidents to see where incidents are happening relative to companies/sites?
+nash_crossings_joined <- crossings_joined %>% filter(cleaned_counties == "nash")
+View(nash_crossings_joined)
+
+library(leaflet)
+nash_crossings_leaflet <- leaflet(data = nash_crossings_joined) %>%
+  addTiles() %>%
+  addMarkers(lng = ~st_coordinates(geometry)[, 1],
+             lat = ~st_coordinates(geometry)[, 2])
+nash_crossings_leaflet
+
+#I can't draw too many conclusions from this, but I wonder whether there is a problem with this specific railroad and/or why so many crossings are happening along this specific point. And while I can't know for sure yet, it seems like multiple blockage incidents have occured at this specific point. 
+```
